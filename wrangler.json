@@ -8,8 +8,9 @@
   "$schema": "./node_modules/wrangler/config-schema.json",
   "routes": [
     {
-      "pattern": "k-20.xyz",
-      "custom_domain": true
+ "custom_domains": [
+    "k-20.xyz"
+  ]
     }
   ]
 }
