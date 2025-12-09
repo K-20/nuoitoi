@@ -1,14 +1,16 @@
 {
-  "$schema": "./node_modules/wrangler/config-schema.json",
+  "$schema": "node_modules/wrangler/config-schema.json",
   "name": "nuoitoi",
-  "main": "dist/worker.js",
+
+  // Cấu hình static site
   "site": {
-    "bucket": "dist",
-    "entry-point": "dist"
+    "bucket": "dist"
   },
+
+  // Routing custom domain
   "routes": [
     {
-      "pattern": "k-20.xyz/*",
+      "pattern": "k-20.xyz",
       "custom_domain": true
     }
   ]
