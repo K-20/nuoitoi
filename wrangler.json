@@ -1,16 +1,15 @@
 {
-  "name": "nuoitoi",
-  "compatibility_date": "2025-12-09",
-  "assets": {
-    "directory": "./dist"
-  },
-
   "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "nuoitoi",
+  "main": "dist/worker.js",
+  "site": {
+    "bucket": "dist",
+    "entry-point": "dist"
+  },
   "routes": [
     {
- "custom_domains": [
-    "k-20.xyz"
-  ]
+      "pattern": "k-20.xyz/*",
+      "custom_domain": true
     }
   ]
 }
