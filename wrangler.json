@@ -4,10 +4,11 @@
   "assets": {
     "directory": "./dist"
   },
+
+  "$schema": "./node_modules/wrangler/config-schema.json",
   "routes": [
     {
       "pattern": "k-20.xyz",
-      "zone_name": "k-20.xyz",
       "custom_domain": true
     }
   ]
