@@ -2,15 +2,8 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "nuoitoi",
 
-  // Static assets folder
-  "assets": {
-    "directory": "dist"
-  },
+  "pages_build_output_dir": "dist",
 
-  // Entry script Cloudflare tự tạo, không cần file của bạn
-  "main": "dist/_worker.js",
-
-  // Domain
   "routes": [
     {
       "pattern": "k-20.xyz",
