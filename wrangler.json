@@ -1,5 +1,6 @@
 {
-  "name": "my-worker",
-  "main": "src/index.ts",
+  // wrangler.json
+  "name": "nuoitoi",
+  "main": "src/index.html",
   "compatibility_date": "2025-12-09"
 }
