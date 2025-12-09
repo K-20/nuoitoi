@@ -1,13 +1,3 @@
 {
-  "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "nuoitoi",
-
-  "pages_build_output_dir": "dist",
-
-  "routes": [
-    {
-      "pattern": "k-20.xyz",
-      "custom_domain": true
-    }
-  ]
+  "pages_build_output_dir": "dist"
 }
