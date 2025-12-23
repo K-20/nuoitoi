@@ -179,7 +179,12 @@
             rotation: { x: 0, y: 0 },
             mouse: { x: 0, y: 0, active: false },
             cameraShake: { intensity: 0, duration: 0 },
-            previousMode: 'TREE'
+            previousMode: 'TREE',
+            isDragging: false,
+            dragStartRotation: { x: 0, y: 0 },
+            dragStartMouse: { x: 0, y: 0 },
+            manualRotationEnabled: false,
+            currentPhotoIndex: -1 // Track current photo index when viewing photos
         };
 
         let scene, camera, renderer, composer;
@@ -748,20 +753,28 @@
             
             document.getElementById('file-input').addEventListener('change', handleImageUpload);
             
-            // Mouse movement tracking for tree rotation
+            // Mouse movement tracking for manual drag rotation
             document.addEventListener('mousemove', (e) => {
-                // Normalize mouse position to -1 to 1 range (centered at screen center)
-                STATE.mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
-                STATE.mouse.y = (e.clientY / window.innerHeight) * 2 - 1;
-                STATE.mouse.active = true;
-            }, { passive: true });
-            
-            // Reset mouse tracking when mouse leaves window
-            document.addEventListener('mouseleave', () => {
-                STATE.mouse.active = false;
-            }, { passive: true });
+                if (STATE.isDragging) {
+                    e.preventDefault(); // Prevent default behavior when dragging
+                    hasDragged = true; // Mark that we've dragged
+                    // Manual drag rotation mode
+                    const deltaX = e.clientX - STATE.dragStartMouse.x;
+                    const deltaY = e.clientY - STATE.dragStartMouse.y;
+                    
+                    // Calculate rotation based on mouse movement
+                    // Horizontal movement rotates around Y axis
+                    // Vertical movement rotates around X axis
+                    const sensitivity = 0.01;
+                    STATE.rotation.y = STATE.dragStartRotation.y + deltaX * sensitivity;
+                    STATE.rotation.x = STATE.dragStartRotation.x - deltaY * sensitivity;
+                    
+                    // Limit X rotation to prevent tree from flipping upside down
+                    STATE.rotation.x = Math.max(-Math.PI / 3, Math.min(Math.PI / 3, STATE.rotation.x));
+                }
+            });
 
-            // Click/Tap sparkles effect
+            // Click/Tap sparkles effect and photo focus
             function handleClickOrTap(clientX, clientY) {
                 // Convert screen coordinates to normalized device coordinates
                 mouse.x = (clientX / window.innerWidth) * 2 - 1;
@@ -770,15 +783,59 @@
                 // Update raycaster
                 raycaster.setFromCamera(mouse, camera);
                 
-                // Check intersection with tree particles
+                // First check for photo intersections (photos are in photoMeshGroup)
+                const photoIntersects = raycaster.intersectObjects(photoMeshGroup.children, true);
+                
+                if (photoIntersects.length > 0) {
+                    // Clicked on a photo - find which photo and focus on it
+                    const clickedObject = photoIntersects[0].object;
+                    
+                    // Find the parent group (photo group contains frame + photo mesh)
+                    let photoGroup = clickedObject;
+                    while (photoGroup && photoGroup.parent !== photoMeshGroup) {
+                        photoGroup = photoGroup.parent;
+                    }
+                    
+                    if (photoGroup && photoGroup.parent === photoMeshGroup) {
+                        // Found the photo group, find corresponding particle
+                        const photoParticle = particleSystem.find(p => p.mesh === photoGroup && p.type === 'PHOTO');
+                        if (photoParticle) {
+                            // Focus on this photo
+                            STATE.mode = 'FOCUS';
+                            STATE.focusTarget = photoGroup;
+                            // Find and set current photo index
+                            const photos = particleSystem.filter(p => p.type === 'PHOTO');
+                            STATE.currentPhotoIndex = photos.findIndex(p => p.mesh === photoGroup);
+                            if (STATE.currentPhotoIndex === -1) STATE.currentPhotoIndex = 0;
+                            triggerCameraShake(0.2, 0.3);
+                            
+                            // Create sparkles at photo position
+                            const worldPos = photoIntersects[0].point;
+                            createSparkles(worldPos, 50);
+                            return; // Exit early, don't create sparkles at tree
+                        }
+                    }
+                }
+                
+                // If in FOCUS mode and clicked on background, exit FOCUS mode
+                if (STATE.mode === 'FOCUS' && photoIntersects.length === 0) {
+                    STATE.mode = 'TREE';
+                    STATE.focusTarget = null;
+                    STATE.currentPhotoIndex = -1;
+                    triggerCameraShake(0.2, 0.3);
+                }
+                
+                // Check intersection with tree particles (if not clicked on photo)
                 const intersects = raycaster.intersectObjects(mainGroup.children, true);
                 
                 if (intersects.length > 0) {
                     // Create sparkles at intersection point
                     const worldPos = intersects[0].point;
                     createSparkles(worldPos, 40);
-                    // Small camera shake on click
-                    triggerCameraShake(0.15, 0.2);
+                    // Small camera shake on click (if not already shaking from mode change)
+                    if (STATE.mode !== 'FOCUS' || photoIntersects.length > 0) {
+                        triggerCameraShake(0.15, 0.2);
+                    }
                 } else {
                     // Create sparkles at center of tree if no intersection (for better UX)
                     const centerPos = new THREE.Vector3(0, 0, 0);
@@ -787,9 +844,94 @@
                 }
             }
 
-            // Mouse click
+            // Double click detection for desktop (similar to double tap on mobile)
+            let lastClickTime = 0;
+            let clickTimeout = null;
+            let hasDragged = false; // Track if mouse was dragged during mousedown
+            
+            // Mouse click with double click detection
             renderer.domElement.addEventListener('click', (e) => {
-                handleClickOrTap(e.clientX, e.clientY);
+                // Ignore click if we just finished dragging
+                if (hasDragged) {
+                    hasDragged = false;
+                    return;
+                }
+                
+                const now = Date.now();
+                
+                // Check if this is a double click (within 300ms)
+                if (now - lastClickTime < 300) {
+                    // Double click detected - enter FOCUS mode to view photos
+                    const photos = particleSystem.filter(p => p.type === 'PHOTO');
+                    if (photos.length > 0) {
+                        STATE.mode = 'FOCUS';
+                        STATE.currentPhotoIndex = 0;
+                        STATE.focusTarget = photos[0].mesh;
+                        triggerCameraShake(0.3, 0.3);
+                    }
+                    lastClickTime = 0; // Reset to prevent triple click
+                    
+                    // Clear any pending single click
+                    if (clickTimeout) {
+                        clearTimeout(clickTimeout);
+                        clickTimeout = null;
+                    }
+                } else {
+                    // Single click
+                    if (STATE.mode === 'FOCUS') {
+                        // If already in FOCUS mode, switch to next photo
+                        const photos = particleSystem.filter(p => p.type === 'PHOTO');
+                        if (photos.length > 0) {
+                            STATE.currentPhotoIndex = (STATE.currentPhotoIndex + 1) % photos.length;
+                            STATE.focusTarget = photos[STATE.currentPhotoIndex].mesh;
+                            triggerCameraShake(0.2, 0.2);
+                            // Create sparkles at photo position
+                            const photoPos = new THREE.Vector3();
+                            photos[STATE.currentPhotoIndex].mesh.getWorldPosition(photoPos);
+                            createSparkles(photoPos, 40);
+                        }
+                        lastClickTime = 0; // Reset to prevent double click detection
+                    } else {
+                        // Single click - might be first click of double click
+                        lastClickTime = now;
+                        
+                        // Delay single click action to allow for double click detection
+                        clickTimeout = setTimeout(() => {
+                            handleClickOrTap(e.clientX, e.clientY);
+                            clickTimeout = null;
+                        }, 300);
+                    }
+                }
+            }, { passive: true });
+
+            // Mouse down - start drag rotation (always enabled, not just after double click)
+            renderer.domElement.addEventListener('mousedown', (e) => {
+                // Allow drag rotation always, or only when manual rotation is enabled
+                // For now, allow it always for better UX
+                e.preventDefault(); // Prevent default behavior
+                STATE.isDragging = true;
+                hasDragged = false; // Reset drag flag
+                STATE.dragStartMouse.x = e.clientX;
+                STATE.dragStartMouse.y = e.clientY;
+                STATE.dragStartRotation.x = STATE.rotation.x;
+                STATE.dragStartRotation.y = STATE.rotation.y;
+                // Disable automatic mouse tracking when dragging
+                STATE.mouse.active = false;
+            });
+
+            // Mouse up - end drag rotation
+            document.addEventListener('mouseup', (e) => {
+                if (STATE.isDragging) {
+                    e.preventDefault();
+                    STATE.isDragging = false;
+                }
+            });
+            
+            // Also handle mouse leave to stop dragging
+            document.addEventListener('mouseleave', () => {
+                if (STATE.isDragging) {
+                    STATE.isDragging = false;
+                }
             }, { passive: true });
             
             // Toggle UI logic - ONLY hide controls, keep title
@@ -824,41 +966,26 @@
             }, { passive: true });
 
             document.addEventListener('touchmove', (e) => {
-                if (isSafariIOS() && !handLandmarker) {
-                    // Touch-based rotation for Safari iOS - uses same smooth interpolation as mouse
-                    if (e.touches.length === 1 && !isPinching) {
-                        // Normalize touch position to -1 to 1 range (same as mouse)
-                        STATE.mouse.x = (e.touches[0].clientX / window.innerWidth) * 2 - 1;
-                        STATE.mouse.y = (e.touches[0].clientY / window.innerHeight) * 2 - 1;
-                        STATE.mouse.active = true;
-                    } else if (e.touches.length === 2 && isPinching) {
-                        // Pinch to focus
-                        const dx = e.touches[0].clientX - e.touches[1].clientX;
-                        const dy = e.touches[0].clientY - e.touches[1].clientY;
-                        const currentDistance = Math.hypot(dx, dy);
-                        const scale = currentDistance / touchStartDistance;
-                        
-                        if (scale < 0.8) {
-                            // Pinch in - FOCUS mode
-                            if (STATE.mode !== 'FOCUS') {
-                                STATE.mode = 'FOCUS';
-                                const photos = particleSystem.filter(p => p.type === 'PHOTO');
-                                if (photos.length) {
-                                    STATE.focusTarget = photos[Math.floor(Math.random()*photos.length)].mesh;
-                                }
+                if (e.touches.length === 2 && isPinching) {
+                    // Pinch to focus
+                    const dx = e.touches[0].clientX - e.touches[1].clientX;
+                    const dy = e.touches[0].clientY - e.touches[1].clientY;
+                    const currentDistance = Math.hypot(dx, dy);
+                    const scale = currentDistance / touchStartDistance;
+                    
+                    if (scale < 0.8) {
+                        // Pinch in - FOCUS mode
+                        if (STATE.mode !== 'FOCUS') {
+                            STATE.mode = 'FOCUS';
+                            const photos = particleSystem.filter(p => p.type === 'PHOTO');
+                            if (photos.length) {
+                                STATE.focusTarget = photos[Math.floor(Math.random()*photos.length)].mesh;
                             }
-                        } else if (scale > 1.2) {
-                            // Pinch out - SCATTER mode
-                            STATE.mode = 'SCATTER';
-                            STATE.focusTarget = null;
                         }
-                    }
-                } else if (!handLandmarker) {
-                    // Touch tracking for other mobile devices (non-Safari iOS)
-                    if (e.touches.length === 1 && !isPinching) {
-                        STATE.mouse.x = (e.touches[0].clientX / window.innerWidth) * 2 - 1;
-                        STATE.mouse.y = (e.touches[0].clientY / window.innerHeight) * 2 - 1;
-                        STATE.mouse.active = true;
+                    } else if (scale > 1.2) {
+                        // Pinch out - SCATTER mode
+                        STATE.mode = 'SCATTER';
+                        STATE.focusTarget = null;
                     }
                 }
             }, { passive: true });
@@ -869,8 +996,6 @@
                 
                 if (e.touches.length === 0) {
                     isPinching = false;
-                    // Reset touch tracking when all fingers are lifted
-                    STATE.mouse.active = false;
                     
                     // Double tap detection (within 300ms)
                     if (now - lastTapTime < 300 && touchDuration < 200) {
@@ -909,6 +1034,13 @@
             if (STATE.mode !== STATE.previousMode) {
                 triggerCameraShake(0.4, 0.4);
                 STATE.previousMode = STATE.mode;
+                // Disable manual rotation when mode changes (can be re-enabled with double click)
+                STATE.manualRotationEnabled = false;
+                STATE.isDragging = false;
+                // Reset photo index when leaving FOCUS mode
+                if (STATE.mode !== 'FOCUS') {
+                    STATE.currentPhotoIndex = -1;
+                }
             }
 
             // Camera shake effect
@@ -952,25 +1084,20 @@
             }
 
             // Rotation Logic
-            if (STATE.mode === 'SCATTER' && STATE.hand.detected) {
-                const targetRotY = STATE.hand.x * Math.PI * 0.9; 
-                const targetRotX = STATE.hand.y * Math.PI * 0.25;
-                STATE.rotation.y += (targetRotY - STATE.rotation.y) * 3.0 * dt;
-                STATE.rotation.x += (targetRotX - STATE.rotation.x) * 3.0 * dt;
-            } else if (STATE.mouse.active) {
-                // Mouse/Touch movement controls tree rotation (works for both desktop and mobile)
-                const targetRotY = STATE.mouse.x * Math.PI * 0.8; // Horizontal movement rotates Y axis
-                const targetRotX = -STATE.mouse.y * Math.PI * 0.3; // Vertical movement rotates X axis (inverted)
-                STATE.rotation.y += (targetRotY - STATE.rotation.y) * 4.0 * dt;
-                STATE.rotation.x += (targetRotX - STATE.rotation.x) * 4.0 * dt;
-                // Limit X rotation to prevent tree from flipping upside down
-                STATE.rotation.x = Math.max(-Math.PI / 3, Math.min(Math.PI / 3, STATE.rotation.x));
-            } else {
-                if(STATE.mode === 'TREE') {
-                    STATE.rotation.y += 0.3 * dt;
-                    STATE.rotation.x += (0 - STATE.rotation.x) * 2.0 * dt;
+            // Skip automatic rotation if manually dragging
+            if (!STATE.isDragging) {
+                if (STATE.mode === 'SCATTER' && STATE.hand.detected) {
+                    const targetRotY = STATE.hand.x * Math.PI * 0.9; 
+                    const targetRotX = STATE.hand.y * Math.PI * 0.25;
+                    STATE.rotation.y += (targetRotY - STATE.rotation.y) * 3.0 * dt;
+                    STATE.rotation.x += (targetRotX - STATE.rotation.x) * 3.0 * dt;
                 } else {
-                     STATE.rotation.y += 0.1 * dt; 
+                    if(STATE.mode === 'TREE' && !STATE.manualRotationEnabled) {
+                        STATE.rotation.y += 0.3 * dt;
+                        STATE.rotation.x += (0 - STATE.rotation.x) * 2.0 * dt;
+                    } else if (!STATE.manualRotationEnabled) {
+                         STATE.rotation.y += 0.1 * dt; 
+                    }
                 }
             }
 
