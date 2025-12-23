@@ -1,24 +1,5 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "nuoitoi",
-
-  // Worker chạy ở chế độ production, không dùng *.workers.dev
-  "workers_dev": false,
-
-  // Dùng HTML tĩnh từ thư mục dist/
-  "assets": {
-    "directory": "dist"
-  },
-
-  // Worker entry (Wrangler tự tạo file này)
-  "main": "_worker.js",
-
-  // Route cho domain thật
-  "route": {
-    "pattern": "k-20.xyz/*",
-    "zone_name": "k-20.xyz"
-  },
-
-  // Ngày tương thích Workers runtime
-  "compatibility_date": "2024-01-01"
+  "pages_build_output_dir": "dist"
 }
