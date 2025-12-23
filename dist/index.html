@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
-    <title>NOEL 2025</title>
+    <title>NOEL - 2025</title>
     <style>
         body { margin: 0; overflow: hidden; background-color: #000000; font-family: 'Times New Roman', serif; }
         #canvas-container { width: 100vw; height: 100vh; position: absolute; top: 0; left: 0; z-index: 1; }
@@ -592,17 +592,10 @@
             // Safari iOS has known issues with MediaPipe WebAssembly
             if (isSafariIOS()) {
                 console.warn('Safari iOS detected - MediaPipe hand tracking may not work. Using fallback controls.');
-                // Show user-friendly message with better instructions
+                // Show user-friendly message
                 const h1 = document.querySelector('h1');
-                const uploadWrapper = document.querySelector('.upload-wrapper');
                 if (h1) {
                     h1.textContent = 'NOEL - 2025';
-                }
-                if (uploadWrapper) {
-                    const hint = document.createElement('div');
-                    hint.style.cssText = 'color: rgba(212, 175, 55, 0.7); font-size: 11px; margin-top: 30px; letter-spacing: 2px; text-transform: uppercase; text-align: center; line-height: 1.6;';
-                    hint.innerHTML = 'Safari iOS: Vuốt màn hình để xoay cây • Chạm đôi để đổi chế độ • Pinch để focus';
-                    uploadWrapper.parentElement.appendChild(hint);
                 }
                 // Don't throw error, just skip MediaPipe initialization
                 return;
@@ -957,6 +950,7 @@
             let isTouchDragging = false;
             let touchHasDragged = false;
             let touchDragTimeout = null;
+            const TAP_MOVEMENT_THRESHOLD = 10; // Pixels - movement less than this is considered a tap
 
             // Single/Double tap detection
             document.addEventListener('touchstart', (e) => {
@@ -970,7 +964,7 @@
                     
                     // Start drag rotation after a short delay (hold touch)
                     touchDragTimeout = setTimeout(() => {
-                        if (e.touches.length === 1 && !isPinching) {
+                        if (e.touches.length === 1 && !isPinching && !touchHasDragged) {
                             isTouchDragging = true;
                             STATE.isDragging = true;
                             STATE.dragStartMouse.x = touchStartX;
@@ -979,7 +973,7 @@
                             STATE.dragStartRotation.y = STATE.rotation.y;
                             STATE.mouse.active = false;
                         }
-                    }, 150); // 150ms delay to distinguish from tap
+                    }, 200); // Increased delay to better distinguish from tap
                 } else if (e.touches.length === 2) {
                     // Pinch gesture
                     isPinching = true;
@@ -990,20 +984,46 @@
             }, { passive: true });
 
             document.addEventListener('touchmove', (e) => {
-                if (e.touches.length === 1 && isTouchDragging && !isPinching) {
-                    // Touch drag rotation (hold and drag)
-                    e.preventDefault();
-                    touchHasDragged = true;
-                    const deltaX = e.touches[0].clientX - STATE.dragStartMouse.x;
-                    const deltaY = e.touches[0].clientY - STATE.dragStartMouse.y;
+                if (e.touches.length === 1 && !isPinching) {
+                    // Check if movement exceeds tap threshold
+                    const deltaX = Math.abs(e.touches[0].clientX - touchStartX);
+                    const deltaY = Math.abs(e.touches[0].clientY - touchStartY);
+                    const movement = Math.hypot(deltaX, deltaY);
                     
-                    // Calculate rotation based on touch movement
-                    const sensitivity = 0.01;
-                    STATE.rotation.y = STATE.dragStartRotation.y + deltaX * sensitivity;
-                    STATE.rotation.x = STATE.dragStartRotation.x - deltaY * sensitivity;
+                    if (movement > TAP_MOVEMENT_THRESHOLD) {
+                        touchHasDragged = true;
+                        // Clear drag timeout if movement detected
+                        if (touchDragTimeout) {
+                            clearTimeout(touchDragTimeout);
+                            touchDragTimeout = null;
+                        }
+                    }
                     
-                    // Limit X rotation to prevent tree from flipping upside down
-                    STATE.rotation.x = Math.max(-Math.PI / 3, Math.min(Math.PI / 3, STATE.rotation.x));
+                    if (isTouchDragging || (movement > TAP_MOVEMENT_THRESHOLD && Date.now() - touchStartTime > 150)) {
+                        // Touch drag rotation (hold and drag)
+                        e.preventDefault();
+                        if (!isTouchDragging) {
+                            // Start dragging now
+                            isTouchDragging = true;
+                            STATE.isDragging = true;
+                            STATE.dragStartMouse.x = touchStartX;
+                            STATE.dragStartMouse.y = touchStartY;
+                            STATE.dragStartRotation.x = STATE.rotation.x;
+                            STATE.dragStartRotation.y = STATE.rotation.y;
+                            STATE.mouse.active = false;
+                        }
+                        
+                        const deltaX = e.touches[0].clientX - STATE.dragStartMouse.x;
+                        const deltaY = e.touches[0].clientY - STATE.dragStartMouse.y;
+                        
+                        // Calculate rotation based on touch movement
+                        const sensitivity = 0.01;
+                        STATE.rotation.y = STATE.dragStartRotation.y + deltaX * sensitivity;
+                        STATE.rotation.x = STATE.dragStartRotation.x - deltaY * sensitivity;
+                        
+                        // Limit X rotation to prevent tree from flipping upside down
+                        STATE.rotation.x = Math.max(-Math.PI / 3, Math.min(Math.PI / 3, STATE.rotation.x));
+                    }
                 } else if (e.touches.length === 2 && isPinching) {
                     // Pinch to focus
                     const dx = e.touches[0].clientX - e.touches[1].clientX;
@@ -1050,7 +1070,10 @@
                     }
                     
                     // Double tap detection (within 300ms) - same as double click: toggle mode
-                    if (now - lastTapTime < 300 && touchDuration < 200 && !touchHasDragged) {
+                    // Only consider it a tap if movement was minimal and duration was short
+                    const isTap = touchDuration < 250 && !touchHasDragged && !isTouchDragging;
+                    
+                    if (isTap && now - lastTapTime < 350 && lastTapTime > 0) {
                         // Double tap - toggle mode (TREE/SCATTER)
                         if (STATE.mode === 'TREE') {
                             STATE.mode = 'SCATTER';
@@ -1063,7 +1086,7 @@
                             STATE.currentPhotoIndex = -1;
                         }
                         lastTapTime = 0; // Reset to prevent triple tap
-                    } else if (touchDuration < 200 && !touchHasDragged) {
+                    } else if (isTap) {
                         // Single tap
                         if (STATE.mode === 'FOCUS') {
                             // If already in FOCUS mode, exit to SCATTER mode
