@@ -177,7 +177,9 @@
             focusTarget: null,
             hand: { detected: false, x: 0, y: 0 },
             rotation: { x: 0, y: 0 },
-            mouse: { x: 0, y: 0, active: false }
+            mouse: { x: 0, y: 0, active: false },
+            cameraShake: { intensity: 0, duration: 0 },
+            previousMode: 'TREE'
         };
 
         let scene, camera, renderer, composer;
@@ -186,7 +188,10 @@
         let particleSystem = []; 
         let photoMeshGroup = new THREE.Group();
         let handLandmarker, video, webcamCanvas, webcamCtx;
-        let caneTexture; 
+        let caneTexture;
+        let sparklesSystem = []; // For click/tap sparkles effect
+        let raycaster = new THREE.Raycaster();
+        let mouse = new THREE.Vector2(); 
 
         async function init() {
             try {
@@ -485,6 +490,48 @@
                  particleSystem.push(new Particle(mesh, 'DUST', true));
             }
         }
+
+        // Create sparkles effect at click/tap position
+        function createSparkles(worldPosition, count = 30) {
+            const colors = [0xffd700, 0xff6b6b, 0x4ecdc4, 0xffe66d, 0xffaa00];
+            const sparkleGeo = new THREE.SphereGeometry(0.15, 8, 8);
+            
+            for (let i = 0; i < count; i++) {
+                const color = colors[Math.floor(Math.random() * colors.length)];
+                const mat = new THREE.MeshBasicMaterial({ 
+                    color: color, 
+                    transparent: true, 
+                    opacity: 1.0 
+                });
+                const sparkle = new THREE.Mesh(sparkleGeo, mat);
+                
+                // Random direction and speed
+                const angle = Math.random() * Math.PI * 2;
+                const speed = 0.5 + Math.random() * 1.5;
+                const velocity = new THREE.Vector3(
+                    Math.cos(angle) * speed,
+                    Math.random() * speed * 0.5 + 0.5,
+                    Math.sin(angle) * speed
+                );
+                
+                sparkle.position.copy(worldPosition);
+                sparkle.userData = {
+                    velocity: velocity,
+                    life: 1.0,
+                    decay: 0.02 + Math.random() * 0.03,
+                    color: color
+                };
+                
+                scene.add(sparkle);
+                sparklesSystem.push(sparkle);
+            }
+        }
+
+        // Trigger camera shake effect
+        function triggerCameraShake(intensity = 0.3, duration = 0.3) {
+            STATE.cameraShake.intensity = intensity;
+            STATE.cameraShake.duration = duration;
+        }
         function addPhotoToScene(texture) {
             const frameGeo = new THREE.BoxGeometry(1.4, 1.4, 0.05);
             const frameMat = new THREE.MeshStandardMaterial({ color: CONFIG.colors.champagneGold, metalness: 1.0, roughness: 0.1 });
@@ -670,11 +717,15 @@
                         if (photos.length) STATE.focusTarget = photos[Math.floor(Math.random()*photos.length)].mesh;
                     }
                 } else if (avgDist < 0.25) {
-                    STATE.mode = 'TREE';
-                    STATE.focusTarget = null;
+                    if (STATE.mode !== 'TREE') {
+                        STATE.mode = 'TREE';
+                        STATE.focusTarget = null;
+                    }
                 } else if (avgDist > 0.4) {
-                    STATE.mode = 'SCATTER';
-                    STATE.focusTarget = null;
+                    if (STATE.mode !== 'SCATTER') {
+                        STATE.mode = 'SCATTER';
+                        STATE.focusTarget = null;
+                    }
                 }
             } else {
                 STATE.hand.detected = false;
@@ -708,6 +759,37 @@
             // Reset mouse tracking when mouse leaves window
             document.addEventListener('mouseleave', () => {
                 STATE.mouse.active = false;
+            }, { passive: true });
+
+            // Click/Tap sparkles effect
+            function handleClickOrTap(clientX, clientY) {
+                // Convert screen coordinates to normalized device coordinates
+                mouse.x = (clientX / window.innerWidth) * 2 - 1;
+                mouse.y = -(clientY / window.innerHeight) * 2 + 1;
+                
+                // Update raycaster
+                raycaster.setFromCamera(mouse, camera);
+                
+                // Check intersection with tree particles
+                const intersects = raycaster.intersectObjects(mainGroup.children, true);
+                
+                if (intersects.length > 0) {
+                    // Create sparkles at intersection point
+                    const worldPos = intersects[0].point;
+                    createSparkles(worldPos, 40);
+                    // Small camera shake on click
+                    triggerCameraShake(0.15, 0.2);
+                } else {
+                    // Create sparkles at center of tree if no intersection (for better UX)
+                    const centerPos = new THREE.Vector3(0, 0, 0);
+                    centerPos.applyMatrix4(mainGroup.matrixWorld);
+                    createSparkles(centerPos, 30);
+                }
+            }
+
+            // Mouse click
+            renderer.domElement.addEventListener('click', (e) => {
+                handleClickOrTap(e.clientX, e.clientY);
             }, { passive: true });
             
             // Toggle UI logic - ONLY hide controls, keep title
@@ -803,7 +885,12 @@
                         STATE.focusTarget = null;
                         lastTapTime = 0; // Reset to prevent triple tap
                     } else if (touchDuration < 200) {
-                        // Single tap - might be first tap of double tap
+                        // Single tap - create sparkles
+                        if (e.changedTouches && e.changedTouches.length > 0) {
+                            const touch = e.changedTouches[0];
+                            handleClickOrTap(touch.clientX, touch.clientY);
+                        }
+                        // Might be first tap of double tap
                         lastTapTime = now;
                     } else if (touchDuration > 500) {
                         // Long press - toggle controls
@@ -817,6 +904,52 @@
         function animate() {
             requestAnimationFrame(animate);
             const dt = clock.getDelta();
+
+            // Check for mode change and trigger camera shake
+            if (STATE.mode !== STATE.previousMode) {
+                triggerCameraShake(0.4, 0.4);
+                STATE.previousMode = STATE.mode;
+            }
+
+            // Camera shake effect
+            if (STATE.cameraShake.duration > 0) {
+                const shakeAmount = STATE.cameraShake.intensity * STATE.cameraShake.duration;
+                camera.position.x = (Math.random() - 0.5) * shakeAmount;
+                camera.position.y = 2 + (Math.random() - 0.5) * shakeAmount;
+                camera.position.z = CONFIG.camera.z + (Math.random() - 0.5) * shakeAmount;
+                STATE.cameraShake.duration -= dt;
+                if (STATE.cameraShake.duration <= 0) {
+                    STATE.cameraShake.duration = 0;
+                    STATE.cameraShake.intensity = 0;
+                }
+            } else {
+                // Smooth return to original position
+                camera.position.lerp(new THREE.Vector3(0, 2, CONFIG.camera.z), 5.0 * dt);
+            }
+
+            // Update sparkles
+            for (let i = sparklesSystem.length - 1; i >= 0; i--) {
+                const sparkle = sparklesSystem[i];
+                const data = sparkle.userData;
+                
+                // Update position
+                sparkle.position.add(data.velocity.clone().multiplyScalar(dt));
+                data.velocity.y -= 2.0 * dt; // Gravity
+                data.velocity.multiplyScalar(0.98); // Friction
+                
+                // Update life and opacity
+                data.life -= data.decay;
+                sparkle.material.opacity = data.life;
+                sparkle.scale.setScalar(0.5 + data.life * 0.5);
+                
+                // Remove dead sparkles
+                if (data.life <= 0) {
+                    scene.remove(sparkle);
+                    sparkle.geometry.dispose();
+                    sparkle.material.dispose();
+                    sparklesSystem.splice(i, 1);
+                }
+            }
 
             // Rotation Logic
             if (STATE.mode === 'SCATTER' && STATE.hand.detected) {
